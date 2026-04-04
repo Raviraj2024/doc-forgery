@@ -4,6 +4,12 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  AUTH_PROFILE_COOKIE,
+  isValidProfilePassword,
+  PROFILE_HOME_ROUTES,
+  resolveProfileFromEmail,
+} from "@/lib/auth";
 
 const SunflowerHero = dynamic(() => import("@/components/ui/SunflowerHero"), {
   ssr: false,
@@ -13,28 +19,21 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const router = useRouter();
 
   const handleSignIn = (event: React.FormEvent) => {
     event.preventDefault();
-    const emailLower = email.toLowerCase();
+    const profile = resolveProfileFromEmail(email);
 
-    if (emailLower.includes("submitter")) {
-      router.push("/submitter/upload");
+    if (!isValidProfilePassword(profile, password)) {
+      setError("Incorrect password. Use abc123 to access this profile.");
       return;
     }
 
-    if (emailLower.includes("compliance")) {
-      router.push("/compliance/overview");
-      return;
-    }
-
-    if (emailLower.includes("devops")) {
-      router.push("/devops/dashboard");
-      return;
-    }
-
-    router.push("/analyst/queue");
+    setError(null);
+    document.cookie = `${AUTH_PROFILE_COOKIE}=${profile}; Path=/; SameSite=Lax`;
+    router.push(PROFILE_HOME_ROUTES[profile]);
   };
 
   return (
@@ -147,7 +146,12 @@ export default function LoginPage() {
                       >
                         <input
                           className="h-10 w-full bg-transparent text-[14px] text-[#1a1d21] outline-none placeholder:text-[#99a0ae]"
-                          onChange={(event) => setEmail(event.target.value)}
+                          onChange={(event) => {
+                            setEmail(event.target.value);
+                            if (error) {
+                              setError(null);
+                            }
+                          }}
                           placeholder="analyst@company.com"
                           required
                           type="email"
@@ -178,7 +182,12 @@ export default function LoginPage() {
                       >
                         <input
                           className="h-10 w-full bg-transparent text-[14px] text-[#1a1d21] outline-none placeholder:text-[#99a0ae]"
-                          onChange={(event) => setPassword(event.target.value)}
+                          onChange={(event) => {
+                            setPassword(event.target.value);
+                            if (error) {
+                              setError(null);
+                            }
+                          }}
                           placeholder="password"
                           required
                           type={showPassword ? "text" : "password"}
@@ -202,6 +211,12 @@ export default function LoginPage() {
                         </button>
                       </div>
                     </label>
+
+                    {error ? (
+                      <div className="rounded-[20px] border border-[rgba(208,37,37,0.14)] bg-[rgba(208,37,37,0.08)] px-4 py-3 text-[12px] font-medium text-[#b42318]">
+                        {error}
+                      </div>
+                    ) : null}
 
                     <button
                       className="mt-1 flex h-12 w-full items-center justify-center gap-2 rounded-full text-[14px] font-semibold text-white transition-transform hover:scale-[1.01]"

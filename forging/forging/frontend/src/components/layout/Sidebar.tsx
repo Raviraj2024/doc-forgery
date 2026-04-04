@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { getProfileFromPathname, type UserProfile } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 /* ─────────────────────────────────────────────────────────────────
@@ -15,15 +16,28 @@ type SidebarItem = {
   href: string;
 };
 
-const profileItems: Record<string, SidebarItem[]> = {
+const profileItems: Record<UserProfile, SidebarItem[]> = {
   analyst: [
-    { name: "Command Deck", icon: "dashboard", href: "/analyst/dashboard" },
     { name: "Review Queue", icon: "manage_search", href: "/analyst/queue" },
     { name: "Forensic Lab", icon: "biotech", href: "/analyst/forensics" },
+    {
+      name: "Override History",
+      icon: "history",
+      href: "/analyst/override-history",
+    },
   ],
   submitter: [
+    {
+      name: "My Submissions",
+      icon: "inventory_2",
+      href: "/submitter/my-submissions",
+    },
     { name: "Upload Center", icon: "upload_file", href: "/submitter/upload" },
-    { name: "Analyst Queue", icon: "fact_check", href: "/analyst/queue" },
+    {
+      name: "Certificates",
+      icon: "workspace_premium",
+      href: "/submitter/certificates",
+    },
   ],
   compliance: [
     {
@@ -31,16 +45,23 @@ const profileItems: Record<string, SidebarItem[]> = {
       icon: "dashboard",
       href: "/compliance/overview",
     },
-    { name: "System Health", icon: "monitor_heart", href: "/devops/dashboard" },
-  ],
-  devops: [
-    { name: "System Health", icon: "hub", href: "/devops/dashboard" },
     {
-      name: "Forensic Lab",
-      icon: "document_scanner",
-      href: "/analyst/forensics",
+      name: "Audit Log",
+      icon: "fact_check",
+      href: "/compliance/audit-log",
+    },
+    {
+      name: "Policy Config",
+      icon: "policy",
+      href: "/compliance/policy-config",
+    },
+    {
+      name: "Reports",
+      icon: "lab_profile",
+      href: "/compliance/reports",
     },
   ],
+  devops: [{ name: "System Health", icon: "hub", href: "/devops/dashboard" }],
 };
 
 /* Bottom utility items — always shown */
@@ -53,9 +74,12 @@ export function Sidebar() {
   const pathname = usePathname();
 
   // Determine active profile from path segment
-  const profile =
-    (pathname.split("/")[1] as keyof typeof profileItems) || "analyst";
-  const items = profileItems[profile] ?? profileItems.analyst;
+  const profile = getProfileFromPathname(pathname) ?? "analyst";
+  const items = profileItems[profile];
+  const utilityItems =
+    profile === "analyst" || profile === "submitter" || profile === "compliance"
+      ? []
+      : bottomItems;
 
   return (
     <aside
@@ -158,47 +182,55 @@ export function Sidebar() {
           })}
         </ul>
 
-        {/* ── Section Divider ── */}
-        <div
-          className="my-6 mx-2"
-          style={{ height: "1px", backgroundColor: "rgba(255,255,255,0.08)" }}
-        />
+        {utilityItems.length > 0 ? (
+          <>
+            {/* ── Section Divider ── */}
+            <div
+              className="my-6 mx-2"
+              style={{
+                height: "1px",
+                backgroundColor: "rgba(255,255,255,0.08)",
+              }}
+            />
 
-        {/* ── Bottom utility links ── */}
-        <ul className="space-y-1">
-          {bottomItems.map((item) => (
-            <li key={`bottom-${item.name}`}>
-              <Link
-                href={item.href}
-                className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-bold transition-all duration-150"
-                style={{ color: "rgba(255,255,255,0.40)" }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLElement).style.backgroundColor =
-                    "rgba(255,255,255,0.05)";
-                  (e.currentTarget as HTMLElement).style.color =
-                    "rgba(255,255,255,0.80)";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLElement).style.backgroundColor = "";
-                  (e.currentTarget as HTMLElement).style.color =
-                    "rgba(255,255,255,0.40)";
-                }}
-              >
-                <span
-                  className="material-symbols-outlined shrink-0 text-white/50"
-                  style={{
-                    fontSize: "20px",
-                    fontVariationSettings:
-                      "'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24",
-                  }}
-                >
-                  {item.icon}
-                </span>
-                <span>{item.name}</span>
-              </Link>
-            </li>
-          ))}
-        </ul>
+            {/* ── Bottom utility links ── */}
+            <ul className="space-y-1">
+              {utilityItems.map((item) => (
+                <li key={`bottom-${item.name}`}>
+                  <Link
+                    href={item.href}
+                    className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-bold transition-all duration-150"
+                    style={{ color: "rgba(255,255,255,0.40)" }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLElement).style.backgroundColor =
+                        "rgba(255,255,255,0.05)";
+                      (e.currentTarget as HTMLElement).style.color =
+                        "rgba(255,255,255,0.80)";
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLElement).style.backgroundColor =
+                        "";
+                      (e.currentTarget as HTMLElement).style.color =
+                        "rgba(255,255,255,0.40)";
+                    }}
+                  >
+                    <span
+                      className="material-symbols-outlined shrink-0 text-white/50"
+                      style={{
+                        fontSize: "20px",
+                        fontVariationSettings:
+                          "'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24",
+                      }}
+                    >
+                      {item.icon}
+                    </span>
+                    <span>{item.name}</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : null}
       </nav>
 
       {/* ── Version Footer ── */}

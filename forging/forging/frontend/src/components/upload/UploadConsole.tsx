@@ -54,8 +54,8 @@ export function UploadConsole({ initialRecentUploads }: UploadConsoleProps) {
         throw new Error(detail || "Upload failed.");
       }
 
-      const analysis = await response.json();
-      window.location.href = `/analyst/analysis/${analysis.analysis_id}`;
+      await response.json();
+      window.location.href = "/submitter/upload";
     } catch (uploadError) {
       setError(
         uploadError instanceof Error ? uploadError.message : "Upload failed.",
@@ -174,7 +174,9 @@ export function UploadConsole({ initialRecentUploads }: UploadConsoleProps) {
                     {isSubmitting ? "hourglass_top" : "play_arrow"}
                   </span>
                   <span>
-                    {isSubmitting ? "Running Engine Diagnostics" : "Submit to Pipeline"}
+                    {isSubmitting
+                      ? "Running Engine Diagnostics"
+                      : "Submit to Pipeline"}
                   </span>
                 </button>
               </div>
@@ -205,9 +207,9 @@ export function UploadConsole({ initialRecentUploads }: UploadConsoleProps) {
             </div>
             <Link
               className="text-sm font-bold text-primary hover:underline"
-              href="/analyst/queue"
+              href="/submitter/my-submissions"
             >
-              Review Queue
+              My Submissions
             </Link>
           </div>
 
@@ -222,9 +224,8 @@ export function UploadConsole({ initialRecentUploads }: UploadConsoleProps) {
                 const tone = verdictTone(item.verdict);
 
                 return (
-                  <Link
-                    className="block rounded-[24px] border border-border-color bg-background-light px-5 py-4 transition-colors hover:border-primary/30 hover:bg-white"
-                    href={`/analyst/analysis/${item.analysis_id}`}
+                  <div
+                    className="rounded-[24px] border border-border-color bg-background-light px-5 py-4"
                     key={item.analysis_id}
                   >
                     <div className="flex items-start gap-4">
@@ -254,7 +255,7 @@ export function UploadConsole({ initialRecentUploads }: UploadConsoleProps) {
                         </div>
                       </div>
                     </div>
-                  </Link>
+                  </div>
                 );
               })
             )}
