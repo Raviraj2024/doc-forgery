@@ -1,7 +1,12 @@
 import {
+  AnalystOverrideHistoryItem,
   AnalysisHistoryResponse,
   AnalysisResponse,
+  AuditLogEntry,
+  DevOpsMonitoringSummaryResponse,
+  DevOpsTelemetryEntry,
   DashboardSummaryResponse,
+  GovernancePolicy,
   HealthResponse,
   ModelInfoResponse,
 } from "@/lib/api-types";
@@ -54,4 +59,24 @@ export function fetchHealth() {
 
 export function fetchModelInfo() {
   return apiFetch<ModelInfoResponse>("/api/v1/model/info");
+}
+
+export function fetchGovernancePolicies() {
+  return apiFetch<GovernancePolicy[]>("/api/v1/compliance/policies");
+}
+
+export function fetchAuditLog() {
+  return apiFetch<AuditLogEntry[]>("/api/v1/compliance/audit-log");
+}
+
+export function fetchAnalystOverrides() {
+  return apiFetch<AnalystOverrideHistoryItem[]>("/api/v1/analyst/overrides");
+}
+
+export function fetchDevOpsTelemetry() {
+  return apiFetch<DevOpsTelemetryEntry[]>("/api/v1/devops/telemetry");
+}
+
+export function fetchDevOpsMonitoring() {
+  return apiFetch<DevOpsMonitoringSummaryResponse>("/api/v1/devops/monitoring");
 }

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 import numpy as np
 from PIL import Image
@@ -233,7 +233,7 @@ class OCRService:
             "%d/%m/%y",
             "%m/%d/%y",
         ]
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
         future_year_limit = now.year + 1
 
         for page_index, text in enumerate(page_texts, start=1):
@@ -241,7 +241,9 @@ class OCRService:
                 parsed = None
                 for fmt in supported_formats:
                     try:
-                        parsed = datetime.strptime(raw_value, fmt).replace(tzinfo=UTC)
+                        parsed = datetime.strptime(raw_value, fmt).replace(
+                            tzinfo=timezone.utc
+                        )
                         break
                     except ValueError:
                         continue

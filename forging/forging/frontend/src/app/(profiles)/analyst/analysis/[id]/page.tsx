@@ -8,10 +8,7 @@ import {
   getTopRegion,
 } from "@/lib/case-view";
 import {
-  formatDateTime,
-  formatPercent,
   formatVerdict,
-  verdictTone,
 } from "@/lib/format";
 
 export default async function AnalysisStatusPage({
@@ -28,7 +25,6 @@ export default async function AnalysisStatusPage({
 
   const primaryPage = getPrimaryPage(analysis);
   const topRegion = getTopRegion(analysis);
-  const tone = verdictTone(analysis.verdict);
   const integrityRows = buildIntegrityRows(analysis);
 
   const isWarning = analysis.verdict === "SUSPICIOUS";
@@ -167,9 +163,6 @@ export default async function AnalysisStatusPage({
               {integrityRows.map((row) => {
                 const isDanger = row.tone === "danger";
                 const isWarning = row.tone === "warning";
-                const isSuccess =
-                  row.tone === "clear" || (!isDanger && !isWarning);
-
                 const leftBorderColor = isDanger
                   ? "bg-accent-red"
                   : isWarning

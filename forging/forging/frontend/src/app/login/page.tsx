@@ -26,6 +26,11 @@ export default function LoginPage() {
     event.preventDefault();
     const profile = resolveProfileFromEmail(email);
 
+    if (!profile) {
+      setError("Unrecognized workspace email. Please contact the DevOps team.");
+      return;
+    }
+
     if (!isValidProfilePassword(profile, password)) {
       setError("Incorrect password. Use abc123 to access this profile.");
       return;
@@ -128,7 +133,7 @@ export default function LoginPage() {
                       Sign in
                     </h1>
                     <p className="mt-2 text-[13px] leading-5 text-[#68707d]">
-                      Use your workspace email to continue.
+                      Use your official profile credentials to connect.
                     </p>
                   </div>
 

@@ -14,6 +14,13 @@ export const PROFILE_PASSWORDS = {
   devops: "abc123",
 } as const;
 
+export const PROFILE_EMAILS = {
+  analyst: "analyst@sequelforensics.com",
+  submitter: "submitter@sequelforensics.com",
+  compliance: "compliance@sequelforensics.com",
+  devops: "devops@sequelforensics.com",
+} as const;
+
 export type UserProfile = keyof typeof PROFILE_HOME_ROUTES;
 
 export function isUserProfile(value: string): value is UserProfile {
@@ -30,22 +37,16 @@ export function getProfileFromPathname(pathname: string): UserProfile | null {
   return segment;
 }
 
-export function resolveProfileFromEmail(email: string): UserProfile {
+export function resolveProfileFromEmail(email: string): UserProfile | null {
   const normalizedEmail = email.toLowerCase();
 
-  if (normalizedEmail.includes("submitter")) {
-    return "submitter";
+  for (const [profile, profileEmail] of Object.entries(PROFILE_EMAILS)) {
+    if (normalizedEmail === profileEmail) {
+      return profile as UserProfile;
+    }
   }
 
-  if (normalizedEmail.includes("compliance")) {
-    return "compliance";
-  }
-
-  if (normalizedEmail.includes("devops")) {
-    return "devops";
-  }
-
-  return "analyst";
+  return null;
 }
 
 export function isValidProfilePassword(profile: UserProfile, password: string) {

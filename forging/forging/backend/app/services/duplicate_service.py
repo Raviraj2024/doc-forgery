@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from PIL import Image
 
@@ -79,5 +79,5 @@ class DuplicateService:
             filename=filename,
             md5_hash=md5_hash,
             phash=phash,
-            created_at=created_at.astimezone(UTC).isoformat(),
+            created_at=created_at.astimezone(timezone.utc).isoformat(),
         )

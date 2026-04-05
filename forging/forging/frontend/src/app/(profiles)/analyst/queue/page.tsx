@@ -4,7 +4,6 @@ import {
   formatRelativeTime,
   formatPercent,
   formatVerdict,
-  formatMs,
 } from "@/lib/format";
 
 export default async function AnalystQueuePage() {

@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
@@ -31,80 +32,170 @@ class StorageService:
         return psycopg.connect(self.settings.database_url, row_factory=dict_row)
 
     def _initialise_database(self) -> None:
-        schema = """
-        CREATE TABLE IF NOT EXISTS analyses (
-            analysis_id TEXT PRIMARY KEY,
-            filename TEXT NOT NULL,
-            document_type TEXT,
-            submitter_id TEXT,
-            page_count INTEGER NOT NULL,
-            device TEXT NOT NULL,
-            verdict TEXT NOT NULL,
-            forensic_risk_score DOUBLE PRECISION NOT NULL,
-            engine_scores_json JSONB NOT NULL,
-            duplicate_status TEXT NOT NULL,
-            md5_hash TEXT NOT NULL,
-            phash TEXT NOT NULL,
-            nearest_match_analysis_id TEXT,
-            hamming_distance INTEGER,
-            processing_time_ms INTEGER NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL,
-            upload_path TEXT NOT NULL,
-            output_json_path TEXT NOT NULL,
-            analysis_json JSONB NOT NULL
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_analyses_created_at ON analyses (created_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_analyses_verdict ON analyses (verdict);
-        CREATE INDEX IF NOT EXISTS idx_analyses_risk ON analyses (forensic_risk_score DESC);
-
-        CREATE TABLE IF NOT EXISTS pages (
-            id BIGSERIAL PRIMARY KEY,
-            analysis_id TEXT NOT NULL REFERENCES analyses (analysis_id) ON DELETE CASCADE,
-            page_index INTEGER NOT NULL,
-            width INTEGER NOT NULL,
-            height INTEGER NOT NULL,
-            artifacts_json JSONB NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS regions (
-            id BIGSERIAL PRIMARY KEY,
-            analysis_id TEXT NOT NULL REFERENCES analyses (analysis_id) ON DELETE CASCADE,
-            region_id TEXT NOT NULL,
-            page_index INTEGER NOT NULL,
-            x INTEGER NOT NULL,
-            y INTEGER NOT NULL,
-            width INTEGER NOT NULL,
-            height INTEGER NOT NULL,
-            area_px INTEGER NOT NULL,
-            mean_mask_score DOUBLE PRECISION NOT NULL,
-            max_mask_score DOUBLE PRECISION NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS duplicate_fingerprints (
-            analysis_id TEXT PRIMARY KEY REFERENCES analyses (analysis_id) ON DELETE CASCADE,
-            filename TEXT NOT NULL,
-            md5_hash TEXT NOT NULL,
-            phash TEXT NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_duplicate_fingerprints_created_at
-            ON duplicate_fingerprints (created_at DESC);
-
-        CREATE TABLE IF NOT EXISTS ocr_anomalies (
-            id BIGSERIAL PRIMARY KEY,
-            analysis_id TEXT NOT NULL REFERENCES analyses (analysis_id) ON DELETE CASCADE,
-            anomaly_type TEXT NOT NULL,
-            description TEXT NOT NULL,
-            page_index INTEGER
-        );
-        """
+        statements = [
+            """
+            CREATE TABLE IF NOT EXISTS analyses (
+                analysis_id TEXT PRIMARY KEY,
+                filename TEXT NOT NULL,
+                document_type TEXT,
+                submitter_id TEXT,
+                tenant_id TEXT,
+                session_ip_address TEXT,
+                session_geolocation TEXT,
+                page_count INTEGER NOT NULL,
+                device TEXT NOT NULL,
+                verdict TEXT NOT NULL,
+                forensic_risk_score DOUBLE PRECISION NOT NULL,
+                engine_scores_json JSONB NOT NULL,
+                duplicate_status TEXT NOT NULL,
+                md5_hash TEXT NOT NULL,
+                phash TEXT NOT NULL,
+                nearest_match_analysis_id TEXT,
+                hamming_distance INTEGER,
+                is_human_reviewed BOOLEAN NOT NULL DEFAULT FALSE,
+                ocr_anomaly_count INTEGER NOT NULL DEFAULT 0,
+                warning_count INTEGER NOT NULL DEFAULT 0,
+                tampered_region_count INTEGER NOT NULL DEFAULT 0,
+                processing_time_ms INTEGER NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL,
+                upload_path TEXT NOT NULL,
+                output_json_path TEXT NOT NULL,
+                analysis_json JSONB NOT NULL
+            )
+            """,
+            "ALTER TABLE analyses ADD COLUMN IF NOT EXISTS tenant_id TEXT",
+            "ALTER TABLE analyses ADD COLUMN IF NOT EXISTS session_ip_address TEXT",
+            "ALTER TABLE analyses ADD COLUMN IF NOT EXISTS session_geolocation TEXT",
+            (
+                "ALTER TABLE analyses ADD COLUMN IF NOT EXISTS "
+                "is_human_reviewed BOOLEAN NOT NULL DEFAULT FALSE"
+            ),
+            (
+                "ALTER TABLE analyses ADD COLUMN IF NOT EXISTS "
+                "ocr_anomaly_count INTEGER NOT NULL DEFAULT 0"
+            ),
+            (
+                "ALTER TABLE analyses ADD COLUMN IF NOT EXISTS "
+                "warning_count INTEGER NOT NULL DEFAULT 0"
+            ),
+            (
+                "ALTER TABLE analyses ADD COLUMN IF NOT EXISTS "
+                "tampered_region_count INTEGER NOT NULL DEFAULT 0"
+            ),
+            "CREATE INDEX IF NOT EXISTS idx_analyses_created_at ON analyses (created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_analyses_verdict ON analyses (verdict)",
+            "CREATE INDEX IF NOT EXISTS idx_analyses_risk ON analyses (forensic_risk_score DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_analyses_tenant_id ON analyses (tenant_id)",
+            """
+            CREATE TABLE IF NOT EXISTS pages (
+                id BIGSERIAL PRIMARY KEY,
+                analysis_id TEXT NOT NULL REFERENCES analyses (analysis_id) ON DELETE CASCADE,
+                page_index INTEGER NOT NULL,
+                width INTEGER NOT NULL,
+                height INTEGER NOT NULL,
+                artifacts_json JSONB NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS regions (
+                id BIGSERIAL PRIMARY KEY,
+                analysis_id TEXT NOT NULL REFERENCES analyses (analysis_id) ON DELETE CASCADE,
+                region_id TEXT NOT NULL,
+                page_index INTEGER NOT NULL,
+                x INTEGER NOT NULL,
+                y INTEGER NOT NULL,
+                width INTEGER NOT NULL,
+                height INTEGER NOT NULL,
+                area_px INTEGER NOT NULL,
+                mean_mask_score DOUBLE PRECISION NOT NULL,
+                max_mask_score DOUBLE PRECISION NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS duplicate_fingerprints (
+                analysis_id TEXT PRIMARY KEY REFERENCES analyses (analysis_id) ON DELETE CASCADE,
+                filename TEXT NOT NULL,
+                md5_hash TEXT NOT NULL,
+                phash TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL
+            )
+            """,
+            (
+                "CREATE INDEX IF NOT EXISTS idx_duplicate_fingerprints_created_at "
+                "ON duplicate_fingerprints (created_at DESC)"
+            ),
+            """
+            CREATE TABLE IF NOT EXISTS ocr_anomalies (
+                id BIGSERIAL PRIMARY KEY,
+                analysis_id TEXT NOT NULL REFERENCES analyses (analysis_id) ON DELETE CASCADE,
+                anomaly_type TEXT NOT NULL,
+                description TEXT NOT NULL,
+                page_index INTEGER
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS governance_policies (
+                policy_id TEXT PRIMARY KEY,
+                description TEXT NOT NULL,
+                threshold_value DOUBLE PRECISION NOT NULL,
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+        ]
         with self._connect() as connection:
-            for statement in schema.split(";"):
-                sql = statement.strip()
-                if sql:
-                    connection.execute(sql)
+            for statement in statements:
+                connection.execute(statement)
+            self._seed_governance_policies(connection)
+
+    def _seed_governance_policies(self, connection: psycopg.Connection) -> None:
+        policies = [
+            (
+                "EXACT_DUPLICATE_DOCUMENT",
+                "Escalate when a document fingerprint exactly matches an existing submission.",
+                float(self.settings.duplicate_exact_threshold),
+            ),
+            (
+                "NEAR_DUPLICATE_DOCUMENT",
+                "Escalate when perceptual hash distance is within the configured near-duplicate threshold.",
+                float(self.settings.duplicate_near_threshold),
+            ),
+            (
+                "OCR_CONTENT_INCONSISTENCY",
+                "Escalate when OCR-derived content anomalies exceed the review threshold.",
+                0.20,
+            ),
+            (
+                "LOCALIZED_PIXEL_TAMPER",
+                "Escalate when localized segmentation regions indicate probable tampering.",
+                0.60,
+            ),
+            (
+                "MULTI_ENGINE_CONSENSUS",
+                "Escalate when multiple forensic layers converge on a high-risk verdict.",
+                self.settings.verdict_thresholds.suspicious_upper,
+            ),
+            (
+                "PIPELINE_WARNING",
+                "Escalate when the pipeline emits runtime warnings that can affect analyst confidence.",
+                1.0,
+            ),
+        ]
+        for policy_id, description, threshold_value in policies:
+            connection.execute(
+                """
+                INSERT INTO governance_policies (
+                    policy_id,
+                    description,
+                    threshold_value,
+                    is_active,
+                    updated_at
+                )
+                VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (policy_id) DO NOTHING
+                """,
+                (policy_id, description, threshold_value, True),
+            )
 
     def database_ready(self) -> bool:
         try:
@@ -139,18 +230,25 @@ class StorageService:
     def store_analysis(self, payload: dict[str, Any], upload_path: Path) -> None:
         analysis_id = payload["analysis_id"]
         output_json_path = self.save_analysis_json(analysis_id, payload)
+        region_count = self._tampered_region_count(payload)
+        ocr_anomaly_count = len(payload.get("ocr_anomalies", []))
+        warning_count = len(payload.get("warnings", []))
 
         with self._connect() as connection:
             connection.execute("DELETE FROM analyses WHERE analysis_id = %s", (analysis_id,))
             connection.execute(
                 """
                 INSERT INTO analyses (
-                    analysis_id, filename, document_type, submitter_id, page_count, device,
+                    analysis_id, filename, document_type, submitter_id, tenant_id,
+                    session_ip_address, session_geolocation, page_count, device,
                     verdict, forensic_risk_score, engine_scores_json, duplicate_status,
                     md5_hash, phash, nearest_match_analysis_id, hamming_distance,
-                    processing_time_ms, created_at, upload_path, output_json_path, analysis_json
+                    is_human_reviewed, ocr_anomaly_count, warning_count,
+                    tampered_region_count, processing_time_ms, created_at,
+                    upload_path, output_json_path, analysis_json
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
                 """,
                 (
@@ -158,6 +256,9 @@ class StorageService:
                     payload["filename"],
                     payload.get("document_type"),
                     payload.get("submitter_id"),
+                    payload.get("tenant_id"),
+                    payload.get("session_ip_address"),
+                    payload.get("session_geolocation"),
                     payload["page_count"],
                     payload["device"],
                     payload["verdict"],
@@ -168,6 +269,10 @@ class StorageService:
                     payload["duplicate_check"]["phash"],
                     payload["duplicate_check"].get("nearest_match_analysis_id"),
                     payload["duplicate_check"].get("hamming_distance"),
+                    payload.get("is_human_reviewed", False),
+                    ocr_anomaly_count,
+                    warning_count,
+                    region_count,
                     payload["processing_time_ms"],
                     payload["created_at"],
                     str(upload_path),
@@ -253,10 +358,16 @@ class StorageService:
                     filename,
                     document_type,
                     submitter_id,
+                    tenant_id,
+                    session_geolocation,
                     page_count,
                     verdict,
                     forensic_risk_score,
                     duplicate_status,
+                    is_human_reviewed,
+                    ocr_anomaly_count,
+                    warning_count,
+                    tampered_region_count,
                     processing_time_ms,
                     created_at
                 FROM analyses
@@ -309,10 +420,16 @@ class StorageService:
                     filename,
                     document_type,
                     submitter_id,
+                    tenant_id,
+                    session_geolocation,
                     page_count,
                     verdict,
                     forensic_risk_score,
                     duplicate_status,
+                    is_human_reviewed,
+                    ocr_anomaly_count,
+                    warning_count,
+                    tampered_region_count,
                     processing_time_ms,
                     created_at
                 FROM analyses
@@ -329,10 +446,16 @@ class StorageService:
                     filename,
                     document_type,
                     submitter_id,
+                    tenant_id,
+                    session_geolocation,
                     page_count,
                     verdict,
                     forensic_risk_score,
                     duplicate_status,
+                    is_human_reviewed,
+                    ocr_anomaly_count,
+                    warning_count,
+                    tampered_region_count,
                     processing_time_ms,
                     created_at
                 FROM analyses
@@ -367,6 +490,158 @@ class StorageService:
             },
             "recent_analyses": [dict(row) for row in recent_rows],
             "flagged_analyses": [dict(row) for row in flagged_rows],
+        }
+
+    def get_analyst_overrides(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    COALESCE(NULLIF(review ->> 'review_id', '')::bigint, 0) AS review_id,
+                    analyses.analysis_id,
+                    analyses.filename,
+                    review ->> 'analyst_user_id' AS analyst_user_id,
+                    review ->> 'previous_verdict' AS previous_verdict,
+                    review ->> 'new_verdict' AS new_verdict,
+                    review ->> 'override_reason' AS override_reason,
+                    (review ->> 'reviewed_at')::timestamptz AS reviewed_at
+                FROM analyses
+                CROSS JOIN LATERAL jsonb_array_elements(
+                    COALESCE(analyses.analysis_json -> 'analyst_reviews', '[]'::jsonb)
+                ) AS review
+                ORDER BY reviewed_at DESC NULLS LAST, analyses.created_at DESC
+                LIMIT %s
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_governance_policies(self) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    policy_id,
+                    description,
+                    threshold_value,
+                    is_active,
+                    updated_at
+                FROM governance_policies
+                ORDER BY policy_id ASC
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_audit_log(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    ROW_NUMBER() OVER (
+                        ORDER BY
+                            COALESCE((trigger ->> 'triggered_at')::timestamptz, analyses.created_at) DESC,
+                            analyses.analysis_id
+                    ) AS id,
+                    analyses.analysis_id,
+                    analyses.filename,
+                    analyses.verdict,
+                    analyses.forensic_risk_score,
+                    trigger ->> 'policy_id' AS policy_id,
+                    trigger ->> 'severity' AS severity,
+                    COALESCE((trigger ->> 'triggered_at')::timestamptz, analyses.created_at) AS triggered_at
+                FROM analyses
+                CROSS JOIN LATERAL jsonb_array_elements(
+                    COALESCE(analyses.analysis_json -> 'rule_triggers', '[]'::jsonb)
+                ) AS trigger
+                ORDER BY triggered_at DESC, analyses.analysis_id
+                LIMIT %s
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_devops_telemetry(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    layer ->> 'layer_name' AS layer_name,
+                    COUNT(*)::bigint AS execution_count,
+                    AVG(COALESCE((layer ->> 'processing_ms')::double precision, 0.0)) AS avg_processing_ms,
+                    AVG(COALESCE((layer ->> 'confidence_score')::double precision, 0.0)) AS avg_confidence_score
+                FROM analyses
+                CROSS JOIN LATERAL jsonb_array_elements(
+                    COALESCE(analyses.analysis_json -> 'forensic_layers', '[]'::jsonb)
+                ) AS layer
+                GROUP BY layer_name
+                ORDER BY avg_processing_ms DESC, execution_count DESC, layer_name ASC
+                LIMIT %s
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_serving_monitoring_summary(self, recent_limit: int = 20) -> dict[str, Any]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT analysis_id, filename, processing_time_ms, created_at, analysis_json
+                FROM analyses
+                ORDER BY created_at DESC
+                """
+            ).fetchall()
+
+        analyses: list[dict[str, Any]] = []
+        for row in rows:
+            payload = row["analysis_json"]
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            analyses.append(
+                {
+                    "analysis_id": row["analysis_id"],
+                    "filename": row["filename"],
+                    "processing_time_ms": float(row["processing_time_ms"]),
+                    "created_at": row["created_at"],
+                    "warnings": payload.get("warnings", []),
+                }
+            )
+
+        processing_times = [entry["processing_time_ms"] for entry in analyses]
+        analyses_with_warnings = [entry for entry in analyses if entry["warnings"]]
+        segmentation_fallbacks = [
+            entry
+            for entry in analyses_with_warnings
+            if any("segmentation" in warning.lower() and "unavailable" in warning.lower() for warning in entry["warnings"])
+        ]
+        recent_warning_events: list[dict[str, Any]] = []
+        for entry in analyses[:recent_limit]:
+            for warning in entry["warnings"]:
+                recent_warning_events.append(
+                    {
+                        "analysis_id": entry["analysis_id"],
+                        "filename": entry["filename"],
+                        "warning": warning,
+                        "created_at": entry["created_at"],
+                    }
+                )
+        recent_warning_events = recent_warning_events[:recent_limit]
+
+        calibration = self.settings.calibration_profile
+        return {
+            "total_analyses": len(analyses),
+            "analyses_with_warnings": len(analyses_with_warnings),
+            "analyses_with_segmentation_fallback": len(segmentation_fallbacks),
+            "average_processing_time_ms": float(np.mean(processing_times)) if processing_times else 0.0,
+            "p50_processing_time_ms": float(np.percentile(processing_times, 50)) if processing_times else 0.0,
+            "p95_processing_time_ms": float(np.percentile(processing_times, 95)) if processing_times else 0.0,
+            "warning_rate": float(len(analyses_with_warnings) / len(analyses)) if analyses else 0.0,
+            "latest_analysis_at": analyses[0]["created_at"] if analyses else None,
+            "calibration_loaded": calibration is not None,
+            "calibration_generated_at": calibration.generated_at if calibration else None,
+            "calibration_sample_count": calibration.sample_count if calibration else None,
+            "calibration_mean_iou": calibration.mean_iou if calibration else None,
+            "calibration_mean_f1": calibration.mean_f1 if calibration else None,
+            "recent_warning_events": recent_warning_events,
         }
 
     def delete_analysis(self, analysis_id: str) -> bool:
@@ -420,3 +695,7 @@ class StorageService:
                 """,
                 (analysis_id, filename, md5_hash, phash, created_at),
             )
+
+    @staticmethod
+    def _tampered_region_count(payload: dict[str, Any]) -> int:
+        return sum(len(page.get("tampered_regions", [])) for page in payload.get("pages", []))

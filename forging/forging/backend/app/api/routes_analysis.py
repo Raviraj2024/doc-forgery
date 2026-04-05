@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, File, Form, Query, Request, UploadFile
+from fastapi import APIRouter, File, Form, Header, Query, Request, UploadFile
 
 from app.schemas.responses import (
     AnalysisHistoryResponse,
@@ -17,11 +17,20 @@ async def analyze_document(
     file: UploadFile = File(...),
     document_type: str | None = Form(default=None),
     submitter_id: str | None = Form(default=None),
+    tenant_id: str | None = Form(default=None),
+    user_agent: str | None = Header(default=None, alias="User-Agent"),
+    x_forwarded_for: str | None = Header(default=None, alias="X-Forwarded-For"),
+    x_geo_country: str | None = Header(default=None, alias="X-Geo-Country"),
 ) -> AnalysisResponse:
+    ip_address = x_forwarded_for.split(",")[0].strip() if x_forwarded_for else request.client.host if request.client else None
     return await request.app.state.report_service.analyze_upload(
         upload_file=file,
         document_type=document_type,
         submitter_id=submitter_id,
+        tenant_id=tenant_id,
+        session_ip_address=ip_address,
+        session_geolocation=x_geo_country,
+        user_agent=user_agent,
     )
 
 

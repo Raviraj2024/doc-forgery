@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 
 import cv2
@@ -12,6 +13,11 @@ from app.services.artifact_service import ArtifactService
 from app.services.preprocess_service import CPUFeatureBundle
 from app.utils.image_ops import apply_heatmap, normalize_map
 from app.utils.scoring import clamp01, map_score
+from app.utils.training_features import (
+    compute_noiseprint_map_training,
+    compute_srm_map_training,
+    extract_dino_distance_map,
+)
 
 try:
     import timm
@@ -34,6 +40,7 @@ class PageEngineResult:
     srm_filename: str
     noiseprint_filename: str
     dino_filename: str
+    timings_ms: dict[str, int]
 
 
 class EngineService:
@@ -41,7 +48,6 @@ class EngineService:
         self.settings = settings
         self.logger = logging.getLogger(self.__class__.__name__)
         self.device = "cuda" if torch.cuda.is_available() and settings.model_device != "cpu" else "cpu"
-        self.srm_kernels = self._build_srm_kernel_bank()
         self.dino_model = self._load_dino_model()
         self.imagenet_mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
         self.imagenet_std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
@@ -49,63 +55,30 @@ class EngineService:
     def _load_dino_model(self) -> torch.nn.Module | None:
         if timm is None:
             return None
-        try:
-            model = timm.create_model(
-                self.settings.dino_model_name,
-                pretrained=True,
-                num_classes=0,
-            )
-            model.eval()
-            model.to(self.device)
-            for parameter in model.parameters():
-                parameter.requires_grad_(False)
-            self.logger.info("DINO backend initialised", extra={"model_name": self.settings.dino_model_name})
-            return model
-        except Exception as exc:
-            self.logger.warning("Falling back from timm DINO backend: %s", exc)
-            return None
+        # Try preferred model first, then fall back (matches doctamper_l4.py training)
+        candidates = [self.settings.dino_model_name]
+        if "vit_small" in self.settings.dino_model_name:
+            candidates.append("vit_tiny_patch16_224")
+        elif "vit_tiny" in self.settings.dino_model_name:
+            candidates.insert(0, "vit_small_patch16_224")
 
-    def _build_srm_kernel_bank(self) -> np.ndarray:
-        base_kernels = [
-            np.array(
-                [[0, 0, 0, 0, 0], [0, -1, 2, -1, 0], [0, 2, -4, 2, 0], [0, -1, 2, -1, 0], [0, 0, 0, 0, 0]],
-                dtype=np.float32,
-            )
-            / 4.0,
-            np.array(
-                [[-1, 2, -2, 2, -1], [2, -6, 8, -6, 2], [-2, 8, -12, 8, -2], [2, -6, 8, -6, 2], [-1, 2, -2, 2, -1]],
-                dtype=np.float32,
-            )
-            / 12.0,
-            np.array(
-                [[0, 0, 0, 0, 0], [0, 0, 0, 0, 0], [0, 1, -2, 1, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0]],
-                dtype=np.float32,
-            )
-            / 2.0,
-            np.array(
-                [[0, 0, 0, 0, 0], [0, 0, 1, 0, 0], [0, 1, -4, 1, 0], [0, 0, 1, 0, 0], [0, 0, 0, 0, 0]],
-                dtype=np.float32,
-            ),
-            np.array(
-                [[1, -2, 1, 0, 0], [-2, 4, -2, 0, 0], [1, -2, 1, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0]],
-                dtype=np.float32,
-            )
-            / 4.0,
-        ]
-
-        unique_kernels: list[np.ndarray] = []
-        seen: set[bytes] = set()
-        for kernel in base_kernels:
-            for rotation in range(4):
-                rotated = np.rot90(kernel, rotation)
-                for variant in (rotated, np.fliplr(rotated)):
-                    key = variant.tobytes()
-                    if key not in seen:
-                        seen.add(key)
-                        unique_kernels.append(variant.astype(np.float32))
-        while len(unique_kernels) < 30:
-            unique_kernels.extend(unique_kernels[: 30 - len(unique_kernels)])
-        return np.stack(unique_kernels[:30], axis=0)
+        for model_name in candidates:
+            try:
+                model = timm.create_model(
+                    model_name,
+                    pretrained=True,
+                    num_classes=0,
+                )
+                model.eval()
+                model.to(self.device)
+                for parameter in model.parameters():
+                    parameter.requires_grad_(False)
+                self.logger.info("DINO backend initialised", extra={"model_name": model_name})
+                return model
+            except Exception as exc:
+                self.logger.warning("DINO model %s failed: %s", model_name, exc)
+        self.logger.warning("All DINO models failed, using fallback patch analysis")
+        return None
 
     def analyze_page(
         self,
@@ -114,10 +87,21 @@ class EngineService:
         page_index: int,
         artifact_service: ArtifactService,
     ) -> PageEngineResult:
+        ela_started = time.perf_counter()
         ela_map = normalize_map(features.ela_rgb.mean(axis=2))
+        ela_ms = int((time.perf_counter() - ela_started) * 1000)
+
+        srm_started = time.perf_counter()
         srm_map = self._compute_srm_map(features.original_rgb)
+        srm_ms = int((time.perf_counter() - srm_started) * 1000)
+
+        noiseprint_started = time.perf_counter()
         noiseprint_map = self._compute_noiseprint_map(features.original_rgb)
+        noiseprint_ms = int((time.perf_counter() - noiseprint_started) * 1000)
+
+        dino_started = time.perf_counter()
         dino_map = self._compute_dino_map(features.original_rgb)
+        dino_ms = int((time.perf_counter() - dino_started) * 1000)
         ocr_proxy_map = normalize_map(features.ocr_proxy)
 
         ela_filename = f"page_{page_index}_ela.png"
@@ -144,6 +128,12 @@ class EngineService:
             srm_filename=srm_filename,
             noiseprint_filename=noiseprint_filename,
             dino_filename=dino_filename,
+            timings_ms={
+                "ela": ela_ms,
+                "srm": srm_ms,
+                "noiseprint": noiseprint_ms,
+                "dino": dino_ms,
+            },
         )
 
     def build_combined_map(
@@ -162,20 +152,10 @@ class EngineService:
         return normalize_map(combined)
 
     def _compute_srm_map(self, image_rgb: np.ndarray) -> np.ndarray:
-        gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
-        responses = []
-        for kernel in self.srm_kernels:
-            response = cv2.filter2D(gray, cv2.CV_32F, kernel)
-            responses.append(np.abs(response))
-        return normalize_map(np.mean(np.stack(responses, axis=0), axis=0))
+        return normalize_map(compute_srm_map_training(image_rgb))
 
     def _compute_noiseprint_map(self, image_rgb: np.ndarray) -> np.ndarray:
-        gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        residual = np.abs(gray - blurred)
-        local_mean = cv2.blur(residual, (15, 15))
-        inconsistency = np.abs(residual - local_mean)
-        return normalize_map(inconsistency)
+        return normalize_map(compute_noiseprint_map_training(image_rgb))
 
     def _compute_dino_map(self, image_rgb: np.ndarray) -> np.ndarray:
         if self.dino_model is not None:
@@ -186,54 +166,15 @@ class EngineService:
 
     def _compute_timm_dino_map(self, image_rgb: np.ndarray) -> np.ndarray | None:
         try:
-            tensor = (
-                torch.from_numpy(image_rgb.transpose(2, 0, 1))
-                .unsqueeze(0)
-                .float()
-                .to(self.device)
-                / 255.0
+            return normalize_map(
+                extract_dino_distance_map(
+                    dino_model=self.dino_model,
+                    image_rgb=image_rgb,
+                    device=self.device,
+                    mean=self.imagenet_mean,
+                    std=self.imagenet_std,
+                )
             )
-            mean = self.imagenet_mean.to(self.device)
-            std = self.imagenet_std.to(self.device)
-            tensor = (tensor - mean) / std
-            tensor = torch.nn.functional.interpolate(
-                tensor,
-                size=(224, 224),
-                mode="bilinear",
-                align_corners=False,
-            )
-            with torch.no_grad():
-                features = self.dino_model.forward_features(tensor)
-
-            patch_tokens: torch.Tensor | None = None
-            cls_token: torch.Tensor | None = None
-            if isinstance(features, dict):
-                patch_tokens = features.get("x_norm_patchtokens")
-                cls_token = features.get("x_norm_clstoken")
-                if patch_tokens is None:
-                    x_value = features.get("x")
-                    if isinstance(x_value, torch.Tensor) and x_value.ndim == 3 and x_value.shape[1] > 1:
-                        patch_tokens = x_value[:, 1:]
-                        cls_token = x_value[:, :1]
-            elif isinstance(features, torch.Tensor) and features.ndim == 3 and features.shape[1] > 1:
-                patch_tokens = features[:, 1:]
-                cls_token = features[:, :1]
-
-            if patch_tokens is None or cls_token is None:
-                return None
-
-            distances = torch.norm(patch_tokens - cls_token, dim=-1)
-            distances = distances - distances.amin(dim=1, keepdim=True)
-            distances = distances / (distances.amax(dim=1, keepdim=True) + 1e-6)
-            side = int(distances.shape[1] ** 0.5)
-            distance_map = distances.reshape(1, 1, side, side)
-            distance_map = torch.nn.functional.interpolate(
-                distance_map,
-                size=(image_rgb.shape[0], image_rgb.shape[1]),
-                mode="bilinear",
-                align_corners=False,
-            )
-            return normalize_map(distance_map.squeeze().detach().cpu().numpy())
         except Exception as exc:
             self.logger.warning("DINO timm path failed, using fallback: %s", exc)
             return None

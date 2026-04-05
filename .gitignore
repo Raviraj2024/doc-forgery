@@ -11,6 +11,8 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .venv/
+.venv310/
+.venv_old/
 venv/
 
 # Node / Next
@@ -32,6 +34,15 @@ yarn-error.log*
 # Local secrets / runtime state
 .env
 .env.*
+_*.txt
+_*.py
+forgery_best.pth
+forging/forging/forgery_best.pth
+doc-forgery-main/backend/data/
+forging/forging/backend/.venv310/
+forging/forging/backend/.venv_old/
+forging/forging/backend/data/calibration/
+forging/forging/backend/data/parity/
 doc-forgery-main/backend/data/db/
 forging/forging/backend/data/uploads/
 forging/forging/backend/data/outputs/

@@ -163,6 +163,27 @@ pytest backend/tests
 
 Some tests are skipped automatically if optional runtime packages such as `segmentation-models-pytorch` or `PyMuPDF` are not installed in the current environment.
 
+## Calibration and parity tooling
+
+Generate a calibration profile from a labeled benchmark dataset:
+
+```bash
+set PYTHONPATH=backend
+python backend/scripts/benchmark_and_calibrate.py path\to\dataset --dataset-name my-benchmark
+```
+
+Run an exact training/inference parity review over one image or a directory:
+
+```bash
+set PYTHONPATH=backend
+python backend/scripts/review_training_parity.py path\to\dataset\images --sample-limit 10
+```
+
+The benchmark run writes:
+
+- calibration profile: `backend/data/calibration/latest.json`
+- parity report: `backend/data/parity/latest.json`
+
 ## Docker
 
 Build from the repository root because the Dockerfile needs both `backend/` and the checkpoint:

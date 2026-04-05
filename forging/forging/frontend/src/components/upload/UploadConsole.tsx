@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { AnalysisHistoryItem } from "@/lib/api-types";
+import { useRouter } from "next/navigation";
+import { useMemo, useRef, useState } from "react";
+import { AnalysisHistoryItem, AnalysisResponse } from "@/lib/api-types";
 import {
   formatDateTime,
   formatMs,
@@ -17,10 +18,12 @@ type UploadConsoleProps = {
 };
 
 export function UploadConsole({ initialRecentUploads }: UploadConsoleProps) {
+  const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [documentType, setDocumentType] = useState("invoice");
   const [submitterId, setSubmitterId] = useState("manual-review");
+  const [tenantId, setTenantId] = useState("default-tenant");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,6 +45,7 @@ export function UploadConsole({ initialRecentUploads }: UploadConsoleProps) {
     formData.append("file", selectedFile);
     formData.append("document_type", documentType);
     formData.append("submitter_id", submitterId);
+    formData.append("tenant_id", tenantId);
 
     try {
       const response = await fetch(`${getBrowserApiBaseUrl()}/api/v1/analyze`, {
@@ -54,8 +58,9 @@ export function UploadConsole({ initialRecentUploads }: UploadConsoleProps) {
         throw new Error(detail || "Upload failed.");
       }
 
-      await response.json();
-      window.location.href = "/submitter/upload";
+      const analysis = (await response.json()) as AnalysisResponse;
+      router.push(`/submitter/my-submissions/${analysis.analysis_id}`);
+      router.refresh();
     } catch (uploadError) {
       setError(
         uploadError instanceof Error ? uploadError.message : "Upload failed.",
@@ -77,7 +82,8 @@ export function UploadConsole({ initialRecentUploads }: UploadConsoleProps) {
               Document Triage Intake
             </h1>
             <p className="mt-2 max-w-2xl text-sm font-medium text-muted">
-              Secure document ingestion.
+              Submit a document into the multi-layer ELA, SRM, Noiseprint, DINO,
+              OCR, pHash, and segmentation pipeline.
             </p>
           </div>
           <div className="rounded-2xl border border-border-color bg-surface px-5 py-4">
@@ -85,7 +91,7 @@ export function UploadConsole({ initialRecentUploads }: UploadConsoleProps) {
               Flow
             </p>
             <p className="mt-1 text-sm font-bold text-text-main">
-              Direct pipeline ingestion
+              Direct Neon-backed case creation
             </p>
           </div>
         </div>
@@ -93,7 +99,7 @@ export function UploadConsole({ initialRecentUploads }: UploadConsoleProps) {
 
       <main className="grid flex-1 gap-8 p-6 lg:grid-cols-[minmax(0,1.35fr)_420px] lg:p-8">
         <section className="rounded-[28px] border border-border-color bg-white p-6 shadow-subtle lg:p-8">
-          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_280px]">
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
             <button
               className="group relative flex min-h-[420px] flex-col items-center justify-center overflow-hidden rounded-[28px] border-2 border-dashed border-border-color bg-surface px-8 text-center transition-colors hover:border-primary/40"
               onClick={() => fileInputRef.current?.click()}
@@ -110,7 +116,8 @@ export function UploadConsole({ initialRecentUploads }: UploadConsoleProps) {
                   Drag in a suspicious document or select from disk
                 </h2>
                 <p className="mt-3 text-sm font-medium text-muted">
-                  Upload files for immediate multi-model verification.
+                  Upload files for immediate multi-model verification and case
+                  creation.
                 </p>
                 <div className="mt-8 flex items-center gap-3 rounded-full bg-primary px-6 py-3 text-sm font-bold text-white">
                   <span>Select File</span>
@@ -158,6 +165,17 @@ export function UploadConsole({ initialRecentUploads }: UploadConsoleProps) {
                   />
                 </div>
 
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.18em] text-muted">
+                    Tenant Id
+                  </label>
+                  <input
+                    className="w-full rounded-2xl border border-border-color bg-white px-4 py-3 text-sm font-medium outline-none transition-colors focus:border-primary"
+                    onChange={(event) => setTenantId(event.target.value)}
+                    value={tenantId}
+                  />
+                </div>
+
                 {error ? (
                   <div className="rounded-2xl border border-accent-red/20 bg-accent-red/10 px-4 py-3 text-sm font-medium text-accent-red">
                     {error}
@@ -175,7 +193,7 @@ export function UploadConsole({ initialRecentUploads }: UploadConsoleProps) {
                   </span>
                   <span>
                     {isSubmitting
-                      ? "Running Engine Diagnostics"
+                      ? "Running Forensic Layers"
                       : "Submit to Pipeline"}
                   </span>
                 </button>
@@ -247,12 +265,21 @@ export function UploadConsole({ initialRecentUploads }: UploadConsoleProps) {
                           </span>
                         </div>
                         <div className="mt-4 flex flex-wrap items-center gap-3 text-xs font-medium text-muted">
-                          <span>
-                            {formatPercent(item.forensic_risk_score)} risk
-                          </span>
+                          <span>{formatPercent(item.forensic_risk_score)} risk</span>
+                          <span>{item.tampered_region_count} regions</span>
+                          <span>{item.ocr_anomaly_count} OCR flags</span>
                           <span>{formatMs(item.processing_time_ms)}</span>
                           <span>{formatDateTime(item.created_at)}</span>
                         </div>
+                        <Link
+                          className="mt-4 inline-flex items-center gap-2 text-sm font-bold text-primary hover:underline"
+                          href={`/submitter/my-submissions/${item.analysis_id}`}
+                        >
+                          <span>Open analysis</span>
+                          <span className="material-symbols-outlined text-base">
+                            arrow_forward
+                          </span>
+                        </Link>
                       </div>
                     </div>
                   </div>

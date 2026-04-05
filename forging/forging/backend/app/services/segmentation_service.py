@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 
 import numpy as np
 from PIL import Image
@@ -23,6 +24,7 @@ class SegmentationResult:
     overlay_filename: str
     contours_filename: str
     warnings: list[str]
+    processing_ms: int
 
 
 class SegmentationService:
@@ -44,6 +46,7 @@ class SegmentationService:
         original_rgb: np.ndarray,
         tensor,
     ) -> SegmentationResult:
+        started = time.perf_counter()
         warnings: list[str] = []
         if self.model_loader.model_loaded:
             logits = self.model_loader.predict(tensor)
@@ -99,4 +102,5 @@ class SegmentationService:
             overlay_filename=overlay_filename,
             contours_filename=contours_filename,
             warnings=warnings,
+            processing_ms=int((time.perf_counter() - started) * 1000),
         )

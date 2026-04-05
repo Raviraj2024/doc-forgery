@@ -1,20 +1,14 @@
 import Link from "next/link";
-import { fetchAnalyses } from "@/lib/api";
+import { fetchAuditLog } from "@/lib/api";
 import {
   formatDateTime,
-  formatDuplicateStatus,
   formatPercent,
   formatVerdict,
   verdictTone,
 } from "@/lib/format";
 
 export default async function ComplianceAuditLogPage() {
-  const history = await fetchAnalyses(12).catch(() => ({
-    page: 1,
-    page_size: 12,
-    total: 0,
-    items: [],
-  }));
+  const history = await fetchAuditLog().catch(() => []);
 
   return (
     <div className="flex min-h-screen flex-col bg-background-light text-text-main">
@@ -52,12 +46,12 @@ export default async function ComplianceAuditLogPage() {
               </h2>
             </div>
             <span className="text-sm font-medium text-muted">
-              {history.total} records
+              {history.length} records
             </span>
           </div>
 
           <div className="mt-6 space-y-3">
-            {history.items.length === 0 ? (
+            {history.length === 0 ? (
               <div className="rounded-[24px] border border-dashed border-border-color bg-background-light px-6 py-14 text-center">
                 <p className="text-xs font-bold uppercase tracking-[0.18em] text-muted">
                   Empty State
@@ -70,24 +64,24 @@ export default async function ComplianceAuditLogPage() {
                 </p>
               </div>
             ) : (
-              history.items.map((item) => {
+              history.map((item) => {
                 const tone = verdictTone(item.verdict);
 
                 return (
                   <div
                     className="rounded-[24px] border border-border-color bg-background-light px-5 py-4"
-                    key={item.analysis_id}
+                    key={item.id}
                   >
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                       <div className="min-w-0">
                         <div className="flex items-center gap-3">
-                          <div className={`size-3 rounded-full ${tone.dot}`} />
+                          <div className={`size-3 rounded-full ${item.severity === 'HIGH' ? 'bg-accent-red' : 'bg-accent-amber'}`} />
                           <p className="truncate text-base font-bold">
-                            {item.filename}
+                            Policy Trigger: {item.policy_id.replace(/_/g, " ")}
                           </p>
                         </div>
                         <p className="mt-2 text-xs font-medium uppercase tracking-[0.18em] text-muted">
-                          {item.analysis_id}
+                          File: {item.filename} | Analysis: {item.analysis_id}
                         </p>
                       </div>
 
@@ -98,34 +92,26 @@ export default async function ComplianceAuditLogPage() {
                           {formatVerdict(item.verdict)}
                         </span>
                         <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-text-main">
-                          {formatDuplicateStatus(item.duplicate_status)}
+                          Severity: {item.severity}
                         </span>
                       </div>
                     </div>
 
-                    <div className="mt-4 grid gap-3 text-sm font-medium text-muted md:grid-cols-3">
+                    <div className="mt-4 grid gap-3 text-sm font-medium text-muted md:grid-cols-2">
                       <div>
                         <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-muted">
-                          Risk
+                          Triggered At
+                        </p>
+                        <p className="mt-1 text-sm font-bold text-text-main">
+                          {formatDateTime(item.triggered_at)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-muted">
+                          Forensic Risk
                         </p>
                         <p className="mt-1 text-sm font-bold text-text-main">
                           {formatPercent(item.forensic_risk_score)}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-muted">
-                          Pages
-                        </p>
-                        <p className="mt-1 text-sm font-bold text-text-main">
-                          {item.page_count}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-muted">
-                          Created
-                        </p>
-                        <p className="mt-1 text-sm font-bold text-text-main">
-                          {formatDateTime(item.created_at)}
                         </p>
                       </div>
                     </div>

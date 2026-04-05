@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import hashlib
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,8 @@ class ModelLoader:
         self.load_error: str | None = None
         self.checkpoint_input_channels: int | None = None
         self.tried_architectures: list[str] = []
+        self.checkpoint_sha256: str | None = None
+        self.checkpoint_size_bytes: int | None = None
 
     def _resolve_device(self, preferred: str) -> str:
         if preferred == "cpu":
@@ -57,35 +60,58 @@ class ModelLoader:
         return cleaned
 
     def _inspect_state_dict(self, state_dict: OrderedDict[str, torch.Tensor]) -> int | None:
-        key = "encoder._conv_stem.weight"
-        if key in state_dict and state_dict[key].ndim == 4:
-            return int(state_dict[key].shape[1])
+        # MiT / SegFormer pattern (mit_b3, mit_b4, mit_b5)
+        mit_key = "encoder.patch_embed1.proj.weight"
+        if mit_key in state_dict and state_dict[mit_key].ndim == 4:
+            return int(state_dict[mit_key].shape[1])
+        # EfficientNet pattern (efficientnet-b2, b3, b4)
+        eff_key = "encoder._conv_stem.weight"
+        if eff_key in state_dict and state_dict[eff_key].ndim == 4:
+            return int(state_dict[eff_key].shape[1])
         return None
 
-    def _candidate_architectures(self, inferred_channels: int | None) -> list[tuple[str, int]]:
-        candidates: list[tuple[str, int]] = [
+    def _detect_encoder_family(self, state_dict: OrderedDict[str, torch.Tensor]) -> str:
+        """Detect whether the checkpoint uses MiT or EfficientNet encoder."""
+        if "encoder.patch_embed1.proj.weight" in state_dict:
+            return "mit"
+        if "encoder._conv_stem.weight" in state_dict:
+            return "efficientnet"
+        return "unknown"
+
+    def _candidate_architectures(
+        self,
+        inferred_channels: int | None,
+        encoder_family: str = "unknown",
+    ) -> list[tuple[str, int]]:
+        ch = inferred_channels or 13
+
+        mit_candidates: list[tuple[str, int]] = [
+            ("mit_b4", ch),
+            ("mit_b5", ch),
+            ("mit_b3", ch),
+            ("mit_b2", ch),
+        ]
+        eff_candidates: list[tuple[str, int]] = [
+            ("efficientnet-b3", ch),
+            ("efficientnet-b4", ch),
+            ("efficientnet-b2", ch),
+        ]
+        # Also try the PRD default of 12 channels for EfficientNet
+        eff_12: list[tuple[str, int]] = [
             ("efficientnet-b4", 12),
             ("efficientnet-b3", 12),
         ]
 
-        inferred_candidates: list[tuple[str, int]] = []
-        if inferred_channels is not None:
-            if inferred_channels == 13:
-                inferred_candidates = [
-                    ("efficientnet-b3", 13),
-                    ("efficientnet-b4", 13),
-                    ("efficientnet-b2", 13),
-                ]
-            else:
-                inferred_candidates = [
-                    ("efficientnet-b4", inferred_channels),
-                    ("efficientnet-b3", inferred_channels),
-                    ("efficientnet-b2", inferred_channels),
-                ]
+        if encoder_family == "mit":
+            ordered = mit_candidates + eff_candidates + eff_12
+        elif encoder_family == "efficientnet":
+            ordered = eff_candidates + eff_12 + mit_candidates
+        else:
+            ordered = mit_candidates + eff_candidates + eff_12
 
         merged: list[tuple[str, int]] = []
         seen: set[tuple[str, int]] = set()
-        for candidate in candidates + inferred_candidates:
+        for candidate in ordered:
             if candidate not in seen:
                 merged.append(candidate)
                 seen.add(candidate)
@@ -114,11 +140,16 @@ class ModelLoader:
         self.selected_encoder = None
         self.input_channels = None
         self.model_parameter_count = None
+        self.checkpoint_sha256 = None
+        self.checkpoint_size_bytes = None
 
         if not checkpoint_path.exists():
             self.load_error = f"Checkpoint not found at {checkpoint_path}"
             self.logger.error(self.load_error)
             return
+
+        self.checkpoint_sha256 = self._hash_checkpoint(checkpoint_path)
+        self.checkpoint_size_bytes = checkpoint_path.stat().st_size
 
         try:
             raw_checkpoint = torch.load(checkpoint_path, map_location="cpu")
@@ -129,17 +160,20 @@ class ModelLoader:
             return
 
         self.checkpoint_input_channels = self._inspect_state_dict(state_dict)
+        encoder_family = self._detect_encoder_family(state_dict)
         self.logger.info(
             "Checkpoint inspection complete",
             extra={
                 "checkpoint_path": str(checkpoint_path),
                 "checkpoint_input_channels": self.checkpoint_input_channels,
+                "encoder_family": encoder_family,
             },
         )
 
         errors: list[str] = []
         for encoder_name, in_channels in self._candidate_architectures(
-            self.checkpoint_input_channels
+            self.checkpoint_input_channels,
+            encoder_family=encoder_family,
         ):
             candidate_name = f"{encoder_name}:{in_channels}"
             self.tried_architectures.append(candidate_name)
@@ -176,6 +210,13 @@ class ModelLoader:
         )
         self.logger.error(self.load_error)
 
+    def _hash_checkpoint(self, checkpoint_path: Path) -> str:
+        digest = hashlib.sha256()
+        with checkpoint_path.open("rb") as file_handle:
+            for chunk in iter(lambda: file_handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
     def predict(self, tensor: torch.Tensor) -> torch.Tensor:
         if not self.model_loaded or self.model is None:
             raise RuntimeError(self.load_error or "Segmentation model is not loaded.")
@@ -193,4 +234,6 @@ class ModelLoader:
             "load_error": self.load_error,
             "checkpoint_input_channels": self.checkpoint_input_channels,
             "tried_architectures": self.tried_architectures,
+            "checkpoint_sha256": self.checkpoint_sha256,
+            "checkpoint_size_bytes": self.checkpoint_size_bytes,
         }
