@@ -238,25 +238,7 @@ export function Sidebar() {
         className="px-6 py-5"
         style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}
       >
-        <div className="flex items-center gap-3">
-          <div
-            className="flex h-9 w-9 items-center justify-center rounded-lg text-sm font-bold text-white"
-            style={{ backgroundColor: "rgba(255,255,255,0.12)" }}
-          >
-            {profile.charAt(0).toUpperCase()}
-          </div>
-          <div className="overflow-hidden">
-            <p className="truncate text-sm font-bold capitalize text-white">
-              {profile}
-            </p>
-            <p
-              className="text-[10px] font-semibold uppercase tracking-wider"
-              style={{ color: "rgba(255,255,255,0.35)" }}
-            >
-              Enterprise Node · Active
-            </p>
-          </div>
-        </div>
+
       </div>
     </aside>
   );
