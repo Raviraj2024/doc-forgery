@@ -211,6 +211,8 @@ class Settings(BaseModel):
     sarvam_base_url: str = "https://api.sarvam.ai"
     sarvam_poll_interval_seconds: float = 2.0
     sarvam_poll_timeout_seconds: float = 90.0
+    nvidia_table_structure_api_key: str | None = None
+    nvidia_table_structure_url: str = "https://ai.api.nvidia.com/v1/cv/nvidia/nemotron-table-structure-v1"
 
     @property
     def backend_root(self) -> Path:
@@ -308,6 +310,11 @@ def build_settings() -> Settings:
         sarvam_base_url=_env_str("SARVAM_BASE_URL", "https://api.sarvam.ai"),
         sarvam_poll_interval_seconds=_env_float("SARVAM_POLL_INTERVAL_SECONDS", 2.0),
         sarvam_poll_timeout_seconds=_env_float("SARVAM_POLL_TIMEOUT_SECONDS", 90.0),
+        nvidia_table_structure_api_key=os.getenv("NVIDIA_TABLE_STRUCTURE_API_KEY"),
+        nvidia_table_structure_url=_env_str(
+            "NVIDIA_TABLE_STRUCTURE_URL",
+            "https://ai.api.nvidia.com/v1/cv/nvidia/nemotron-table-structure-v1",
+        ),
     )
 
 

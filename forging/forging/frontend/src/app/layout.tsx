@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
-import { Plus_Jakarta_Sans } from "next/font/google";
+import { Inter } from "next/font/google";
 import "./globals.css";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 
-const plusJakartaSans = Plus_Jakarta_Sans({
+const inter = Inter({
   subsets: ["latin"],
-  variable: "--font-plus-jakarta",
-  weight: ["400", "500", "600", "700", "800"],
+  variable: "--font-inter",
+  weight: ["400", "500", "600", "700"],
   display: "swap",
 });
 
@@ -21,7 +21,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${plusJakartaSans.variable} h-full antialiased`}>
+    <html lang="en" className={`${inter.variable} h-full antialiased`}>
       <head>
         {/* Material Symbols Outlined — Google Fonts CDN (matches all design asset references) */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />

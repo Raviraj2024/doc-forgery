@@ -4,6 +4,7 @@ export type AnalystAnalysisView =
   | "evidence"
   | "diagnostics"
   | "timeline"
+  | "case"
   | "report";
 
 const ANALYST_ANALYSIS_VIEW_SUFFIX: Record<AnalystAnalysisView, string> = {
@@ -12,6 +13,7 @@ const ANALYST_ANALYSIS_VIEW_SUFFIX: Record<AnalystAnalysisView, string> = {
   evidence: "/evidence",
   diagnostics: "/diagnostics",
   timeline: "/timeline",
+  case: "/case",
   report: "/report",
 };
 

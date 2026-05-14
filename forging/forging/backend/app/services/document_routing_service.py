@@ -129,10 +129,13 @@ class DocumentRoutingService:
         elif (
             provider == "nemotron"
             and self.settings.openrouter_api_key
-            and self.should_use_nemotron_text_extraction(
-                filename=filename,
-                page_count=len(rendered_pages),
-                document_type=document_type,
+            and (
+                self.settings.document_router_provider == "nemotron"
+                or self.should_use_nemotron_text_extraction(
+                    filename=filename,
+                    page_count=len(rendered_pages),
+                    document_type=document_type,
+                )
             )
         ):
             try:
@@ -305,7 +308,7 @@ class DocumentRoutingService:
             "Content-Type": "application/json",
         }
         page_texts: list[str] = []
-        max_pages = min(len(rendered_pages), 2)
+        max_pages = len(rendered_pages)
 
         with httpx.Client(timeout=self.settings.document_router_timeout_seconds) as client:
             for rendered_page in rendered_pages[:max_pages]:

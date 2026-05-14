@@ -77,7 +77,7 @@ class OCRService:
                 page_texts=["" for _ in pages],
                 backend_name=None,
             )
-
+        else:
             for page_number, page in enumerate(pages, start=1):
                 try:
                     page_texts.append(self._extract_page_text(page))
@@ -139,43 +139,230 @@ class OCRService:
 
     def _detect_amount_mismatch(self, page_texts: list[str]) -> list[dict[str, object]]:
         anomalies: list[dict[str, object]] = []
-        currency_pattern = re.compile(
-            r"(?:USD|INR|EUR|GBP|AUD|CAD|Rs\.?|[$₹€£])?\s*([0-9]{1,3}(?:[, ][0-9]{3})*(?:\.[0-9]{2})|[0-9]+\.[0-9]{2})",
+        total_pattern = re.compile(
+            r"\b(grand\s+total|net\s+payable|amount\s+due|invoice\s+total|total\s+amount|total)\b",
             re.IGNORECASE,
         )
-        total_pattern = re.compile(r"\b(total|grand total|amount due|net payable)\b", re.IGNORECASE)
+        grand_total_pattern = re.compile(
+            r"\b(grand\s+total|net\s+payable|amount\s+due|invoice\s+total|total\s+amount)\b",
+            re.IGNORECASE,
+        )
+        subtotal_pattern = re.compile(
+            r"\b(sub\s*total|subtotal|taxable\s+value|line\s+item\s+total)\b",
+            re.IGNORECASE,
+        )
+        header_pattern = re.compile(
+            r"\b(sr\.?\s*no|description|hsn|sac|quantity|qty|unit|rate|gst|amount|buyer|seller|invoice\s+information)\b",
+            re.IGNORECASE,
+        )
+        non_item_pattern = re.compile(
+            r"\b(invoice\s+no|invoice\s+number|invoice\s+date|due\s+date|purchase\s+order|payment\s+terms|gstin|contact|email|address|phone|currency)\b",
+            re.IGNORECASE,
+        )
 
         for page_index, text in enumerate(page_texts, start=1):
-            totals: list[float] = []
-            line_items: list[float] = []
+            line_subtotals: list[float] = []
+            line_gross_totals: list[float] = []
+            declared_subtotals: list[float] = []
+            declared_grand_totals: list[float] = []
+            declared_generic_totals: list[float] = []
+
             for raw_line in text.splitlines():
                 line = raw_line.strip()
                 if not line:
                     continue
-                matches = [float(match.group(1).replace(",", "").replace(" ", "")) for match in currency_pattern.finditer(line)]
-                if not matches:
+
+                amount_tokens = self._extract_amount_tokens(line)
+                if not amount_tokens:
                     continue
-                if total_pattern.search(line):
-                    totals.extend(matches)
-                else:
-                    if len(matches) == 1:
-                        line_items.extend(matches)
-            if totals and len(line_items) >= 2:
-                candidate_total = max(totals)
-                candidate_sum = sum(line_items[: min(len(line_items), 20)])
-                tolerance = max(1.0, candidate_total * 0.02)
-                if abs(candidate_sum - candidate_total) > tolerance:
+
+                amounts = [float(token["value"]) for token in amount_tokens]
+                if total_pattern.search(line) or subtotal_pattern.search(line):
+                    candidate_total = max(amounts)
+                    if subtotal_pattern.search(line):
+                        declared_subtotals.append(candidate_total)
+                    elif grand_total_pattern.search(line):
+                        declared_grand_totals.append(candidate_total)
+                    else:
+                        declared_generic_totals.append(candidate_total)
+                    continue
+
+                if header_pattern.search(line) and len(amount_tokens) <= 1:
+                    continue
+                if non_item_pattern.search(line):
+                    continue
+
+                item = self._parse_invoice_line_item(line, amount_tokens)
+                if item is None:
+                    continue
+
+                line_subtotals.append(item["subtotal"])
+                line_gross_totals.append(item["gross_total"])
+
+                expected_subtotal = item["quantity"] * item["unit_price"]
+                tolerance = max(1.0, abs(item["subtotal"]) * 0.005)
+                if abs(expected_subtotal - item["subtotal"]) > tolerance:
                     anomalies.append(
                         {
                             "type": OCRAnomalyType.AMOUNT_MISMATCH,
                             "description": (
-                                f"Detected amount mismatch on page {page_index}: "
-                                f"line items sum to {candidate_sum:.2f} while total is {candidate_total:.2f}."
+                                f"Line item arithmetic mismatch on page {page_index}: "
+                                f"{item['quantity']:.2f} x {item['unit_price']:.2f} = "
+                                f"{expected_subtotal:.2f}, but the row amount is {item['subtotal']:.2f}."
                             ),
                             "page_index": page_index,
                         }
                     )
+
+            if not line_subtotals:
+                continue
+
+            subtotal_sum = sum(line_subtotals)
+            gross_sum = sum(line_gross_totals)
+            candidate_subtotal = max(declared_subtotals) if declared_subtotals else None
+            candidate_grand_total = (
+                max(declared_grand_totals)
+                if declared_grand_totals
+                else max(declared_generic_totals)
+                if declared_generic_totals
+                else None
+            )
+
+            if candidate_subtotal is not None:
+                anomalies.extend(
+                    self._compare_invoice_total(
+                        page_index=page_index,
+                        label="subtotal",
+                        expected=subtotal_sum,
+                        declared=candidate_subtotal,
+                    )
+                )
+
+            if candidate_grand_total is not None:
+                expected_total = gross_sum if abs(gross_sum - subtotal_sum) > 0.01 else subtotal_sum
+                anomalies.extend(
+                    self._compare_invoice_total(
+                        page_index=page_index,
+                        label="grand total",
+                        expected=expected_total,
+                        declared=candidate_grand_total,
+                    )
+                )
         return anomalies
+
+    def _extract_amount_tokens(self, line: str) -> list[dict[str, float | int | str]]:
+        amount_pattern = re.compile(
+            r"(?<![A-Z0-9])(?:USD|INR|EUR|GBP|AUD|CAD|Rs\.?|[$₹€£])?\s*([0-9]{1,3}(?:[, ][0-9]{3})+(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)(?![A-Z0-9])",
+            re.IGNORECASE,
+        )
+        tokens: list[dict[str, float | int | str]] = []
+        for match in amount_pattern.finditer(line):
+            raw_value = match.group(1).strip()
+            compact = raw_value.replace(",", "").replace(" ", "")
+            if not compact or compact == ".":
+                continue
+            start, end = match.span(1)
+            if self._is_percentage_token(line, end):
+                continue
+            if self._looks_like_date_fragment(line, start, end):
+                continue
+            try:
+                value = float(compact)
+            except ValueError:
+                continue
+            tokens.append(
+                {
+                    "value": value,
+                    "raw": raw_value,
+                    "start": start,
+                    "end": end,
+                }
+            )
+        return tokens
+
+    def _parse_invoice_line_item(
+        self,
+        line: str,
+        amount_tokens: list[dict[str, float | int | str]],
+    ) -> dict[str, float] | None:
+        values = [float(token["value"]) for token in amount_tokens]
+        if len(values) < 3:
+            return None
+
+        if self._line_starts_with_serial_number(line, amount_tokens[0]):
+            values = values[1:]
+        if len(values) < 3:
+            return None
+
+        while len(values) > 3 and values[0].is_integer() and values[0] >= 100000:
+            values = values[1:]
+
+        quantity, unit_price, subtotal = values[-3], values[-2], values[-1]
+        if quantity <= 0 or unit_price <= 0 or subtotal <= 0:
+            return None
+        if quantity > 100000 or unit_price < 1:
+            return None
+
+        gst_rate = self._extract_gst_rate(line)
+        gross_total = subtotal * (1.0 + gst_rate / 100.0) if gst_rate is not None else subtotal
+        return {
+            "quantity": quantity,
+            "unit_price": unit_price,
+            "subtotal": subtotal,
+            "gross_total": gross_total,
+        }
+
+    def _compare_invoice_total(
+        self,
+        *,
+        page_index: int,
+        label: str,
+        expected: float,
+        declared: float,
+    ) -> list[dict[str, object]]:
+        tolerance = max(1.0, abs(declared) * 0.005)
+        if abs(expected - declared) <= tolerance:
+            return []
+        return [
+            {
+                "type": OCRAnomalyType.AMOUNT_MISMATCH,
+                "description": (
+                    f"Invoice {label} mismatch on page {page_index}: "
+                    f"computed line items total {expected:.2f}, but declared {label} is {declared:.2f}."
+                ),
+                "page_index": page_index,
+            }
+        ]
+
+    @staticmethod
+    def _is_percentage_token(line: str, end: int) -> bool:
+        return line[end : end + 2].lstrip().startswith("%")
+
+    @staticmethod
+    def _looks_like_date_fragment(line: str, start: int, end: int) -> bool:
+        before = line[max(0, start - 1) : start]
+        after = line[end : end + 1]
+        return before in {"/", "-"} or after in {"/", "-"}
+
+    @staticmethod
+    def _line_starts_with_serial_number(
+        line: str,
+        token: dict[str, float | int | str],
+    ) -> bool:
+        value = float(token["value"])
+        return bool(
+            value.is_integer()
+            and 0 < value <= 100
+            and int(token["start"]) <= max(4, len(line) // 10)
+        )
+
+    @staticmethod
+    def _extract_gst_rate(line: str) -> float | None:
+        match = re.search(r"\b(\d{1,2}(?:\.\d{1,2})?)\s*%", line)
+        if not match:
+            return None
+        rate = float(match.group(1))
+        return rate if 0 <= rate <= 50 else None
 
     def _detect_duplicate_references(self, page_texts: list[str]) -> list[dict[str, object]]:
         anomalies: list[dict[str, object]] = []
@@ -230,7 +417,7 @@ class OCRService:
     def _detect_invalid_dates(self, page_texts: list[str]) -> list[dict[str, object]]:
         anomalies: list[dict[str, object]] = []
         date_pattern = re.compile(
-            r"\b(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2}|[A-Za-z]{3,9}\s+\d{1,2},\s+\d{4})\b"
+            r"\b(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2}|[A-Za-z]{3,9}\s+\d{1,2},\s+\d{4}|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4})\b"
         )
         supported_formats = [
             "%d/%m/%Y",
@@ -241,6 +428,8 @@ class OCRService:
             "%Y-%m-%d",
             "%b %d, %Y",
             "%B %d, %Y",
+            "%d %b %Y",
+            "%d %B %Y",
             "%d/%m/%y",
             "%m/%d/%y",
         ]
@@ -263,6 +452,15 @@ class OCRService:
                         {
                             "type": OCRAnomalyType.INVALID_DATE,
                             "description": f"Unparseable date detected: {raw_value}.",
+                            "page_index": page_index,
+                        }
+                    )
+                    continue
+                if parsed.date() > now.date():
+                    anomalies.append(
+                        {
+                            "type": OCRAnomalyType.INVALID_DATE,
+                            "description": f"Future date detected: {raw_value}.",
                             "page_index": page_index,
                         }
                     )

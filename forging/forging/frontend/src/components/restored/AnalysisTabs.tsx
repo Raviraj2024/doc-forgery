@@ -6,6 +6,7 @@ const TAB_DEFS = [
   { key: "evidence", label: "Evidence", suffix: "/evidence" },
   { key: "diagnostics", label: "Diagnostics", suffix: "/diagnostics" },
   { key: "timeline", label: "Timeline", suffix: "/timeline" },
+  { key: "case", label: "Case", suffix: "/case" },
 ] as const;
 
 export function AnalysisTabs({
@@ -13,7 +14,7 @@ export function AnalysisTabs({
   active,
 }: {
   caseId: string;
-  active: "status" | "evidence" | "diagnostics" | "timeline";
+  active: "status" | "evidence" | "diagnostics" | "timeline" | "case";
 }) {
   return (
     <div className="pb-0 bg-white border-b border-border-color flex-shrink-0">
